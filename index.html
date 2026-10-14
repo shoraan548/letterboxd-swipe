@@ -39,6 +39,9 @@
   details { margin-top: 18px; color: var(--muted); font-size: 13px; }
   details input { width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
   #resume { margin-top: 18px; width: 100%; }
+  .err { margin-top: 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--red);
+    background: #e5484d1a; color: var(--text); font-size: 14px; }
+  .loadInfo { color: var(--muted); font-size: 12px; margin-top: 4px; }
   #memInfo { margin-top: 10px; }
 
   /* progress */
@@ -54,7 +57,9 @@
   .card.anim { transition: transform .3s ease, opacity .3s ease; }
   .poster { flex: 1; min-height: 0; position: relative; background: #0d1014; display: flex; align-items: center; justify-content: center; }
   .poster img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
-  .poster .ph { color: var(--muted); text-align: center; padding: 20px; font-size: 22px; font-weight: 600; }
+  .poster .ph { color: var(--muted); text-align: center; padding: 20px; font-size: 14px; }
+  .poster .ph.none { font-size: 18px; font-weight: 600; }
+  .poster .ph .ico { font-size: 56px; opacity: .5; margin-bottom: 6px; }
   .meta { padding: 12px 16px 14px; }
   .meta .t { font-size: 20px; font-weight: 700; }
   .meta .y { color: var(--muted); }
@@ -105,6 +110,7 @@
       <p>целиком, как скачал (или любой CSV со списком) · можно нажать и выбрать</p>
       <input id="file" type="file" accept=".zip,.csv,application/zip,text/csv" hidden>
     </div>
+    <div id="err" class="err hidden"></div>
     <button id="resume" class="primary hidden"></button>
     <div class="note">
       <ol>
@@ -117,9 +123,6 @@
     <div class="note" id="memInfo"></div>
     <details>
       <summary>Настройки</summary>
-      <p>Постеры по умолчанию берутся из Википедии. С бесплатным API-ключом
-      <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDB</a> (v3) будут точнее.</p>
-      <input id="tmdb" placeholder="TMDB API key (v3) — необязательно" autocomplete="off">
       <p><button class="link" id="exportAll">Скачать CSV со всеми оценками за всё время</button><br>
       <button class="link" id="forgetAll" style="color:var(--red)">Забыть всё</button></p>
     </details>
@@ -129,6 +132,7 @@
   <section id="swipe" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
     <div class="progress"><div id="bar"></div></div>
     <div class="stats"><span id="count"></span><span id="tally"></span></div>
+    <div class="loadInfo"></div>
     <div id="stack"></div>
     <div class="controls">
       <button id="no" title="Не смотрел (←)">✕</button>
@@ -143,6 +147,7 @@
     <div style="font-size:48px">🎉</div>
     <h2>Всё!</h2>
     <p id="doneStats" style="color:var(--muted)"></p>
+    <div class="loadInfo"></div>
     <div class="col">
       <button class="primary" id="exportBtn2"></button>
       <a href="https://letterboxd.com/import/" target="_blank" rel="noopener">Открыть letterboxd.com/import ↗</a>
@@ -169,7 +174,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const MEM_KEY = 'lbswipe.memory.v2', QUEUE_KEY = 'lbswipe.queue.v2', POSTER_KEY = 'lbswipe.posters.v1', TMDB_KEY = 'lbswipe.tmdb';
+const MEM_KEY = 'lbswipe.memory.v2', QUEUE_KEY = 'lbswipe.queue.v2', POSTER_KEY = 'lbswipe.posters.v1';
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -213,7 +218,7 @@ function filmsFromCSV(text) {
   // list exports have a metadata block first, so take the LAST row that looks like a header
   let h = -1;
   rows.forEach((r, i) => { const l = r.map(x => x.trim().toLowerCase()); if (l.includes('name') && l.includes('year')) h = i; });
-  if (h < 0) return [];
+  if (h < 0) return null; // not a Letterboxd-like CSV at all
   const head = rows[h].map(x => x.trim().toLowerCase());
   const iN = head.indexOf('name'), iY = head.indexOf('year');
   const iU = head.findIndex(x => x === 'letterboxd uri' || x === 'url');
@@ -279,13 +284,6 @@ function updateExportBtn() {
 /* ---------- posters ---------- */
 const inflight = {};
 
-async function tmdbPoster(f, key) {
-  const u = `https://api.themoviedb.org/3/search/movie?api_key=${encodeURIComponent(key)}&query=${encodeURIComponent(f.name)}` + (f.year ? `&year=${f.year}` : '');
-  const r = await fetch(u); if (!r.ok) throw new Error('tmdb ' + r.status);
-  const j = await r.json(); const m = (j.results || []).find(x => x.poster_path);
-  return m ? 'https://image.tmdb.org/t/p/w500' + m.poster_path : '';
-}
-
 async function wikiPoster(f) {
   const tries = [`${f.name} ${f.year} hastemplate:"Infobox film"`, `${f.name} hastemplate:"Infobox film"`, `${f.name} ${f.year} film`];
   const api = 'https://en.wikipedia.org/w/api.php?format=json&origin=*&';
@@ -307,11 +305,9 @@ function getPoster(f) {
   const k = fkey(f);
   if (k in posters) return Promise.resolve(posters[k]);
   if (inflight[k]) return inflight[k];
-  const key = ($('#tmdb').value || '').trim();
   return inflight[k] = (async () => {
-    let url = '';
-    try { if (key) url = await tmdbPoster(f, key); } catch {}
-    try { if (!url) url = await wikiPoster(f); } catch { delete inflight[k]; return ''; } // network error: don't cache
+    let url;
+    try { url = await wikiPoster(f); } catch { delete inflight[k]; return ''; } // network error: don't cache
     posters[k] = url; store.set(POSTER_KEY, posters); delete inflight[k];
     return url;
   })();
@@ -340,20 +336,24 @@ function cardEl(f, back) {
   el.className = 'card' + (back ? ' back' : '');
   el.innerHTML = `<div class="poster"><div class="ph"></div><div class="label yes">СМОТРЕЛ</div><div class="label no">НЕТ</div></div>
     <div class="meta">${f.uri ? '<a target="_blank" rel="noopener">Letterboxd ↗</a>' : ''}<div class="t"></div><div class="y"></div></div>`;
-  el.querySelector('.ph').textContent = f.name;
+  const ph = el.querySelector('.ph');
+  ph.textContent = 'Ищу постер…';
+  const noPoster = () => { ph.classList.add('none'); ph.innerHTML = '<div class="ico">🎞️</div>Нет постера'; };
   el.querySelector('.t').textContent = f.name;
   el.querySelector('.y').textContent = f.year;
   if (f.uri) el.querySelector('a').href = f.uri;
   getPoster(f).then(url => {
-    if (!url) return;
+    if (!url) return noPoster();
     const img = new Image(); img.src = url; img.alt = f.name;
-    img.onload = () => el.querySelector('.ph')?.replaceWith(img);
+    img.onload = () => ph.replaceWith(img);
+    img.onerror = noPoster;
   });
   return el;
 }
 
 function render() {
   const n = queue.length;
+  document.querySelectorAll('.loadInfo').forEach(el => el.textContent = loadInfo);
   const done = queue.slice(0, pos).map(f => mem[fkey(f)]).filter(Boolean);
   const seen = done.filter(d => d.seen).length, rated = done.filter(d => d.rating).length;
   $('#bar').style.width = (n ? 100 * pos / n : 100) + '%';
@@ -494,25 +494,58 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- loading ---------- */
+let loadInfo = '';
+
+function showError(msg) {
+  $('#err').textContent = msg;
+  $('#err').classList.toggle('hidden', !msg);
+}
+
+async function readFilms(file) {
+  if (!file.size) throw new Error('Файл пустой.');
+  const buf = await file.arrayBuffer();
+  const b = new Uint8Array(buf, 0, 2);
+  const skip = new Set();
+
+  if (b[0] === 0x50 && b[1] === 0x4b) { // "PK" — a ZIP, whatever the file is called
+    if (typeof DecompressionStream === 'undefined') throw new Error('Этот браузер не умеет распаковывать ZIP. Обнови его или загрузи watchlist.csv из архива отдельно.');
+    let csvs;
+    try { csvs = await unzipCSVs(buf); }
+    catch { throw new Error('Не получилось распаковать архив — похоже, он повреждён или скачался не до конца. Скачай экспорт заново.'); }
+    const pick = n => Object.entries(csvs).find(([p]) => (p === n || p.endsWith('/' + n)) && !p.includes('deleted/'))?.[1];
+    const wl = pick('watchlist.csv');
+    if (wl == null) throw new Error(Object.keys(csvs).length
+      ? 'В архиве нет watchlist.csv. Это точно экспорт Letterboxd (Settings → Data → Export your data)?'
+      : 'В архиве нет ни одного CSV — это не экспорт Letterboxd.');
+    const films = filmsFromCSV(wl);
+    if (!films) throw new Error('watchlist.csv в архиве странный: в нём нет колонок Name и Year.');
+    if (!films.length) throw new Error('Watchlist в этом экспорте пустой.');
+    // anything already watched/rated/logged on Letterboxd doesn't need a card
+    for (const n of ['watched.csv', 'ratings.csv', 'diary.csv']) (filmsFromCSV(pick(n) || '') || []).forEach(f => skip.add(fkey(f)));
+    return { films, skip };
+  }
+
+  if (/\.zip$/i.test(file.name)) throw new Error('Файл называется .zip, но это не ZIP-архив. Скачай экспорт заново.');
+  const text = new TextDecoder().decode(buf);
+  if (text.includes('\u0000') || text.includes('�')) throw new Error('Это не текстовый файл. Нужен ZIP-экспорт Letterboxd или CSV из него.');
+  const films = filmsFromCSV(text);
+  if (!films) throw new Error('Не нашёл в файле колонки Name и Year. Нужен CSV, выгруженный из Letterboxd (watchlist или список).');
+  if (!films.length) throw new Error('Колонки на месте, но фильмов в файле нет.');
+  return { films, skip };
+}
+
 async function loadFile(file) {
-  try {
-    let films, skip = new Set();
-    if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
-      const csvs = await unzipCSVs(await file.arrayBuffer());
-      const pick = n => Object.entries(csvs).find(([p]) => (p === n || p.endsWith('/' + n)) && !p.includes('deleted/'))?.[1];
-      const wl = pick('watchlist.csv');
-      if (wl == null) throw new Error('В архиве нет watchlist.csv');
-      films = filmsFromCSV(wl);
-      // anything already watched/rated/logged on Letterboxd doesn't need a card
-      for (const n of ['watched.csv', 'ratings.csv', 'diary.csv']) filmsFromCSV(pick(n) || '').forEach(f => skip.add(fkey(f)));
-    } else {
-      films = filmsFromCSV(await file.text());
-      if (!films.length) throw new Error('Не нашёл в файле колонки Name и Year');
-    }
-    queue = films.filter(f => !mem[fkey(f)] && !skip.has(fkey(f)));
-    pos = 0; history = [];
-    saveQueue(); render();
-  } catch (err) { alert(err.message); }
+  showError('');
+  let films, skip;
+  try { ({ films, skip } = await readFilms(file)); }
+  catch (err) { showError(err.message); return; }
+  const onLb = films.filter(f => skip.has(fkey(f))).length;
+  const inMem = films.filter(f => !skip.has(fkey(f)) && mem[fkey(f)]).length;
+  queue = films.filter(f => !mem[fkey(f)] && !skip.has(fkey(f)));
+  pos = 0; history = [];
+  loadInfo = `В файле ${films.length}` + (onLb ? ` · уже просмотрено на Letterboxd: ${onLb}` : '')
+    + (inMem ? ` · уже оценено здесь: ${inMem}` : '') + ` · к разбору: ${queue.length}`;
+  saveQueue(); render();
 }
 
 const drop = $('#drop'), fileIn = $('#file');
@@ -522,8 +555,7 @@ fileIn.onchange = () => fileIn.files[0] && loadFile(fileIn.files[0]);
 ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
 
-$('#tmdb').value = store.get(TMDB_KEY, '');
-$('#tmdb').onchange = () => store.set(TMDB_KEY, $('#tmdb').value.trim());
+store.del('lbswipe.tmdb'); // a TMDB key saved by an older version
 
 $('#no').onclick = () => decide(false);
 $('#yes').onclick = () => decide(true);
