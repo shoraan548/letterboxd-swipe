@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Letterboxd Swipe</title>
+<style>
+  :root {
+    --bg: #14181c; --panel: #1c2228; --line: #2c3440; --text: #e6edf3; --muted: #8b98a5;
+    --green: #00c030; --orange: #ff8000; --red: #e5484d; --blue: #40bcf4; --star: #00c030;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; align-items: center; }
+  .hidden { display: none !important; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line);
+    background: var(--panel); border-radius: 10px; padding: 10px 16px; }
+  button:hover { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+  button.link { background: none; border: none; color: var(--blue); padding: 4px; font-size: 13px; }
+  a { color: var(--blue); }
+
+  header { width: 100%; max-width: 520px; padding: 14px 16px 6px; display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; letter-spacing: .3px; }
+  header h1 span { color: var(--orange); } header h1 b { color: var(--green); } header h1 i { color: var(--blue); font-style: normal; }
+  header button { padding: 6px 12px; font-size: 13px; }
+
+  main { width: 100%; max-width: 520px; flex: 1; display: flex; flex-direction: column; padding: 0 16px 16px; min-height: 0; }
+
+  /* setup */
+  #drop { margin-top: 24px; border: 2px dashed var(--line); border-radius: 16px; padding: 40px 20px; text-align: center; cursor: pointer; }
+  #drop.over { border-color: var(--green); background: #00c03011; }
+  #drop p { color: var(--muted); margin: 8px 0 0; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 18px; }
+  .note code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+  .note ol { padding-left: 20px; margin: 6px 0; }
+  details { margin-top: 18px; color: var(--muted); font-size: 13px; }
+  details input { width: 100%; margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  #resume { margin-top: 18px; width: 100%; }
+  #memInfo { margin-top: 10px; }
+
+  /* progress */
+  .progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 4px 0 8px; }
+  .progress div { height: 100%; background: var(--green); width: 0; transition: width .2s; }
+  .stats { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; }
+
+  /* cards */
+  #stack { position: relative; flex: 1; min-height: 300px; margin: 10px 0 14px; }
+  .card { position: absolute; inset: 0; background: var(--panel); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 10px 30px #0008; display: flex; flex-direction: column; touch-action: none; user-select: none; }
+  .card.back { transform: scale(.95) translateY(10px); opacity: .6; }
+  .card.anim { transition: transform .3s ease, opacity .3s ease; }
+  .poster { flex: 1; min-height: 0; position: relative; background: #0d1014; display: flex; align-items: center; justify-content: center; }
+  .poster img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  .poster .ph { color: var(--muted); text-align: center; padding: 20px; font-size: 22px; font-weight: 600; }
+  .meta { padding: 12px 16px 14px; }
+  .meta .t { font-size: 20px; font-weight: 700; }
+  .meta .y { color: var(--muted); }
+  .meta a { font-size: 12px; float: right; margin-top: 4px; }
+  .label { position: absolute; top: 24px; padding: 6px 14px; border: 3px solid; border-radius: 10px; font-weight: 800;
+    font-size: 24px; opacity: 0; letter-spacing: 1px; background: #000a; }
+  .label.no { right: 20px; color: var(--red); transform: rotate(12deg); }
+  .label.yes { left: 20px; color: var(--green); transform: rotate(-12deg); }
+
+  .controls { display: flex; justify-content: center; gap: 22px; align-items: center; }
+  .controls button { width: 64px; height: 64px; border-radius: 50%; font-size: 26px; padding: 0; }
+  .controls #undo { width: 46px; height: 46px; font-size: 18px; }
+  #no { color: var(--red); } #yes { color: var(--green); }
+  .hint { text-align: center; color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+  /* rating */
+  #rate { position: fixed; inset: 0; background: #000c; display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  #rate .box { background: var(--panel); border-radius: 18px; padding: 22px; width: 100%; max-width: 420px; text-align: center; }
+  #rate img { height: 180px; border-radius: 8px; }
+  #rate h2 { margin: 10px 0 2px; font-size: 19px; }
+  #rate .y { color: var(--muted); }
+  #stars { display: flex; justify-content: center; margin: 18px 0 6px; }
+  .star { position: relative; width: 52px; height: 52px; font-size: 52px; line-height: 52px; color: var(--line); cursor: pointer; }
+  .star .fill { position: absolute; left: 0; top: 0; overflow: hidden; color: var(--star); width: 0; white-space: nowrap; }
+  .star .h { position: absolute; top: 0; bottom: 0; width: 50%; }
+  .star .h.l { left: 0; } .star .h.r { right: 0; }
+  #rateVal { height: 22px; color: var(--muted); }
+  #rate .row { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+
+  #done { text-align: center; margin-top: 40px; }
+  #done h2 { margin-bottom: 4px; }
+  #done .col { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>●</span><b>●</b><i>●</i> Letterboxd Swipe</h1>
+  <button id="exportBtn" class="hidden" title="Скачать новые оценки для импорта"></button>
+  <button id="homeBtn" class="hidden" title="Загрузить другой файл">📂</button>
+</header>
+
+<main>
+  <!-- setup -->
+  <section id="setup">
+    <div id="drop">
+      <div style="font-size:40px">🎞️</div>
+      <strong>Перетащи сюда ZIP-экспорт Letterboxd</strong>
+      <p>целиком, как скачал (или любой CSV со списком) · можно нажать и выбрать</p>
+      <input id="file" type="file" accept=".zip,.csv,application/zip,text/csv" hidden>
+    </div>
+    <button id="resume" class="primary hidden"></button>
+    <div class="note">
+      <ol>
+        <li>letterboxd.com → Settings → Data → <b>Export your data</b> → скачается ZIP.</li>
+        <li>Кинь его сюда. Покажу фильмы из watchlist, кроме уже просмотренных (на Letterboxd или отмеченных здесь). «Не смотрел» не запоминается — такие фильмы покажу снова.</li>
+        <li>Свайпай, потом <b>⬇ CSV</b> → <a href="https://letterboxd.com/import/" target="_blank" rel="noopener">letterboxd.com/import</a>.</li>
+      </ol>
+      В следующий раз — то же самое со свежим экспортом: увидишь только новое.
+    </div>
+    <div class="note" id="memInfo"></div>
+    <details>
+      <summary>Настройки</summary>
+      <p>Постеры по умолчанию берутся из Википедии. С бесплатным API-ключом
+      <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDB</a> (v3) будут точнее.</p>
+      <input id="tmdb" placeholder="TMDB API key (v3) — необязательно" autocomplete="off">
+      <p><button class="link" id="exportAll">Скачать CSV со всеми оценками за всё время</button><br>
+      <button class="link" id="forgetAll" style="color:var(--red)">Забыть всё</button></p>
+    </details>
+  </section>
+
+  <!-- swipe -->
+  <section id="swipe" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div class="progress"><div id="bar"></div></div>
+    <div class="stats"><span id="count"></span><span id="tally"></span></div>
+    <div id="stack"></div>
+    <div class="controls">
+      <button id="no" title="Не смотрел (←)">✕</button>
+      <button id="undo" title="Отменить (Backspace)">↶</button>
+      <button id="yes" title="Смотрел (→)">✓</button>
+    </div>
+    <div class="hint">← не смотрел · → смотрел · Backspace — отменить · прогресс сохраняется сам</div>
+  </section>
+
+  <!-- done -->
+  <section id="done" class="hidden">
+    <div style="font-size:48px">🎉</div>
+    <h2>Всё!</h2>
+    <p id="doneStats" style="color:var(--muted)"></p>
+    <div class="col">
+      <button class="primary" id="exportBtn2"></button>
+      <a href="https://letterboxd.com/import/" target="_blank" rel="noopener">Открыть letterboxd.com/import ↗</a>
+      <button class="link" id="undo2">↶ Вернуться к последнему</button>
+    </div>
+  </section>
+</main>
+
+<!-- rating -->
+<div id="rate" class="hidden">
+  <div class="box">
+    <img id="rateImg" alt="">
+    <h2 id="rateTitle"></h2>
+    <div class="y" id="rateYear"></div>
+    <div id="stars"></div>
+    <div id="rateVal">&nbsp;</div>
+    <div class="row">
+      <button id="rateCancel">Назад</button>
+      <button id="rateSkip">Смотрел, без оценки</button>
+    </div>
+    <div class="hint">Клик по половине звезды = ½ · клавиши 1…9, 0 = ½…5★ · Enter = без оценки · Esc = назад</div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const MEM_KEY = 'lbswipe.memory.v2', QUEUE_KEY = 'lbswipe.queue.v2', POSTER_KEY = 'lbswipe.posters.v1', TMDB_KEY = 'lbswipe.tmdb';
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+// mem: every answer ever given, key -> {name, year, uri, seen, rating, exported}. Survives new files.
+// queue: films from the last loaded file still waiting for an answer.
+const fkey = f => f.name.trim().toLowerCase() + '|' + f.year;
+let mem = store.get(MEM_KEY, {});
+for (const k in mem) if (!mem[k].seen) delete mem[k]; // older versions also stored "not seen"
+let queue = store.get(QUEUE_KEY, []).filter(f => !mem[fkey(f)]);
+let pos = 0, history = [];
+const posters = store.get(POSTER_KEY, {});
+const saveMem = () => store.set(MEM_KEY, mem);
+const saveQueue = () => store.set(QUEUE_KEY, queue.slice(pos));
+
+/* ---------- CSV ---------- */
+function parseCSV(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  text = text.replace(/^﻿/, '');
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function filmsFromCSV(text) {
+  const rows = parseCSV(text);
+  // list exports have a metadata block first, so take the LAST row that looks like a header
+  let h = -1;
+  rows.forEach((r, i) => { const l = r.map(x => x.trim().toLowerCase()); if (l.includes('name') && l.includes('year')) h = i; });
+  if (h < 0) return [];
+  const head = rows[h].map(x => x.trim().toLowerCase());
+  const iN = head.indexOf('name'), iY = head.indexOf('year');
+  const iU = head.findIndex(x => x === 'letterboxd uri' || x === 'url');
+  const seen = new Set(), films = [];
+  for (const r of rows.slice(h + 1)) {
+    const name = (r[iN] || '').trim();
+    if (!name) continue;
+    const film = { name, year: (r[iY] || '').trim(), uri: iU >= 0 ? (r[iU] || '').trim() : '' };
+    if (seen.has(fkey(film))) continue;
+    seen.add(fkey(film)); films.push(film);
+  }
+  return films;
+}
+
+/* ---------- ZIP (Letterboxd export) ---------- */
+async function unzipCSVs(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), td = new TextDecoder();
+  let e = buf.byteLength - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('Это не похоже на ZIP');
+  const out = {};
+  let p = dv.getUint32(e + 16, true);
+  for (let i = dv.getUint16(e + 10, true); i > 0; i--) {
+    const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const off = dv.getUint32(p + 42, true);
+    const name = td.decode(u8.subarray(p + 46, p + 46 + nlen));
+    p += 46 + nlen + xlen + clen;
+    if (!/\.csv$/i.test(name) || (method !== 0 && method !== 8)) continue;
+    const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+    let data = u8.subarray(start, start + size);
+    if (method === 8) data = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    out[name.toLowerCase()] = td.decode(data);
+  }
+  return out;
+}
+
+/* ---------- export ---------- */
+function csvCell(v) { v = v == null ? '' : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+const pending = () => Object.values(mem).filter(m => m.seen && !m.exported);
+
+function exportCSV(all) {
+  const rows = all ? Object.values(mem).filter(m => m.seen) : pending();
+  if (!rows.length) { alert(all ? 'Пока нет ни одного просмотренного фильма' : 'Новых оценок нет — всё уже скачано'); return; }
+  const lines = [['Title', 'Year', 'Rating', 'LetterboxdURI'], ...rows.map(m => [m.name, m.year, m.rating ?? '', m.uri])];
+  const blob = new Blob(['﻿' + lines.map(r => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'letterboxd-import-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  rows.forEach(m => m.exported = true); saveMem(); updateExportBtn();
+}
+
+function updateExportBtn() {
+  const n = pending().length;
+  $('#exportBtn').textContent = `⬇ CSV (${n})`;
+  $('#exportBtn').disabled = !n;
+  $('#exportBtn2').textContent = n ? `⬇ Скачать CSV для Letterboxd (${n})` : '✓ Всё скачано';
+  $('#exportBtn2').disabled = !n;
+}
+
+/* ---------- posters ---------- */
+const inflight = {};
+
+async function tmdbPoster(f, key) {
+  const u = `https://api.themoviedb.org/3/search/movie?api_key=${encodeURIComponent(key)}&query=${encodeURIComponent(f.name)}` + (f.year ? `&year=${f.year}` : '');
+  const r = await fetch(u); if (!r.ok) throw new Error('tmdb ' + r.status);
+  const j = await r.json(); const m = (j.results || []).find(x => x.poster_path);
+  return m ? 'https://image.tmdb.org/t/p/w500' + m.poster_path : '';
+}
+
+async function wikiPoster(f) {
+  const tries = [`${f.name} ${f.year} hastemplate:"Infobox film"`, `${f.name} hastemplate:"Infobox film"`, `${f.name} ${f.year} film`];
+  const api = 'https://en.wikipedia.org/w/api.php?format=json&origin=*&';
+  for (const q of tries) {
+    const r = await fetch(api + 'action=query&list=search&srlimit=1&srsearch=' + encodeURIComponent(q));
+    if (!r.ok) continue;
+    const title = (await r.json()).query?.search?.[0]?.title;
+    if (!title) continue;
+    // film posters are non-free, so pageimages skips them — take the image straight from the infobox
+    const p = await fetch(api + 'action=parse&prop=text&section=0&page=' + encodeURIComponent(title));
+    const html = (await p.json()).parse?.text?.['*'] || '';
+    const m = html.match(/class="infobox[\s\S]*?<img[^>]+src="([^"]+)"/);
+    if (m) { const src = m[1].replace(/&amp;/g, '&'); return src.startsWith('//') ? 'https:' + src : src; }
+  }
+  return '';
+}
+
+function getPoster(f) {
+  const k = fkey(f);
+  if (k in posters) return Promise.resolve(posters[k]);
+  if (inflight[k]) return inflight[k];
+  const key = ($('#tmdb').value || '').trim();
+  return inflight[k] = (async () => {
+    let url = '';
+    try { if (key) url = await tmdbPoster(f, key); } catch {}
+    try { if (!url) url = await wikiPoster(f); } catch { delete inflight[k]; return ''; } // network error: don't cache
+    posters[k] = url; store.set(POSTER_KEY, posters); delete inflight[k];
+    return url;
+  })();
+}
+
+/* ---------- UI ---------- */
+function show(id) {
+  ['setup', 'swipe', 'done'].forEach(s => $('#' + s).classList.toggle('hidden', s !== id));
+  $('#exportBtn').classList.toggle('hidden', id === 'setup');
+  $('#homeBtn').classList.toggle('hidden', id === 'setup');
+  updateExportBtn();
+}
+
+function showSetup() {
+  const n = Object.keys(mem).length;
+  $('#memInfo').textContent = n ? `В памяти ${n} фильмов, отмеченных как просмотренные, — их больше не покажу.` : '';
+  const left = queue.length - pos;
+  $('#resume').classList.toggle('hidden', left <= 0);
+  $('#resume').textContent = `▶ Продолжить — осталось ${left}`;
+  fileIn.value = '';
+  show('setup');
+}
+
+function cardEl(f, back) {
+  const el = document.createElement('div');
+  el.className = 'card' + (back ? ' back' : '');
+  el.innerHTML = `<div class="poster"><div class="ph"></div><div class="label yes">СМОТРЕЛ</div><div class="label no">НЕТ</div></div>
+    <div class="meta">${f.uri ? '<a target="_blank" rel="noopener">Letterboxd ↗</a>' : ''}<div class="t"></div><div class="y"></div></div>`;
+  el.querySelector('.ph').textContent = f.name;
+  el.querySelector('.t').textContent = f.name;
+  el.querySelector('.y').textContent = f.year;
+  if (f.uri) el.querySelector('a').href = f.uri;
+  getPoster(f).then(url => {
+    if (!url) return;
+    const img = new Image(); img.src = url; img.alt = f.name;
+    img.onload = () => el.querySelector('.ph')?.replaceWith(img);
+  });
+  return el;
+}
+
+function render() {
+  const n = queue.length;
+  const done = queue.slice(0, pos).map(f => mem[fkey(f)]).filter(Boolean);
+  const seen = done.filter(d => d.seen).length, rated = done.filter(d => d.rating).length;
+  $('#bar').style.width = (n ? 100 * pos / n : 100) + '%';
+  $('#count').textContent = `${Math.min(pos + 1, n)} / ${n}`;
+  $('#tally').textContent = `смотрел ${seen} · оценено ${rated}`;
+  if (pos >= n) {
+    $('#doneStats').textContent = n ? `Разобрано ${n}. Смотрел: ${seen}, с оценкой: ${rated}.` : 'Новых фильмов нет — всё уже разобрано.';
+    show('done'); return;
+  }
+  show('swipe');
+  const stack = $('#stack'); stack.innerHTML = '';
+  if (queue[pos + 1]) stack.appendChild(cardEl(queue[pos + 1], true));
+  const top = cardEl(queue[pos], false);
+  stack.appendChild(top); attachDrag(top);
+  for (let k = 2; k <= 5; k++) if (queue[pos + k]) getPoster(queue[pos + k]); // prefetch
+}
+
+/* ---------- swipe ---------- */
+let busy = false;
+
+function attachDrag(el) {
+  let x0 = null, dx = 0, id = null;
+  const yes = el.querySelector('.label.yes'), no = el.querySelector('.label.no');
+  const move = d => {
+    el.style.transform = `translateX(${d}px) rotate(${d / 18}deg)`;
+    yes.style.opacity = Math.max(0, Math.min(1, d / 100));
+    no.style.opacity = Math.max(0, Math.min(1, -d / 100));
+  };
+  el.addEventListener('pointerdown', e => {
+    if (busy || e.target.closest('a')) return;
+    x0 = e.clientX; dx = 0; id = e.pointerId; el.setPointerCapture(id); el.classList.remove('anim');
+  });
+  el.addEventListener('pointermove', e => { if (x0 === null || e.pointerId !== id) return; dx = e.clientX - x0; move(dx); });
+  const end = () => {
+    if (x0 === null) return; x0 = null;
+    if (Math.abs(dx) > 100) decide(dx > 0);
+    else { el.classList.add('anim'); move(0); }
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el._move = move;
+}
+
+function flyOut(right) {
+  const el = $('#stack .card:last-child');
+  return new Promise(res => {
+    el.classList.add('anim'); el._move(right ? 140 : -140);
+    requestAnimationFrame(() => {
+      el.style.transform = `translateX(${right ? 600 : -600}px) rotate(${right ? 30 : -30}deg)`; el.style.opacity = 0;
+    });
+    setTimeout(res, 250);
+  });
+}
+
+function record(f, seen, rating) {
+  // only "seen" is remembered: an unseen film should come back next time, maybe you've watched it by then
+  if (seen) mem[fkey(f)] = { name: f.name, year: f.year, uri: f.uri, seen, rating, exported: false };
+  history.push(pos); pos++;
+  saveMem(); saveQueue(); render();
+}
+
+async function decide(seen) {
+  if (busy || pos >= queue.length || $('#swipe').classList.contains('hidden')) return;
+  busy = true;
+  const f = queue[pos];
+  await flyOut(seen);
+  if (!seen) { busy = false; record(f, false, null); return; }
+  const rating = await askRating(f);
+  busy = false;
+  if (rating === undefined) { render(); return; } // cancelled
+  record(f, true, rating);
+}
+
+function undo() {
+  if (busy || !history.length) return;
+  pos = history.pop();
+  delete mem[fkey(queue[pos])];
+  saveMem(); saveQueue(); render();
+}
+
+/* ---------- rating ---------- */
+let rateResolve = null;
+const fmt = v => v ? '★'.repeat(Math.floor(v)) + (v % 1 ? '½' : '') + `  (${v})` : ' ';
+
+function paintStars(v) {
+  document.querySelectorAll('#stars .star').forEach((s, i) => {
+    s.querySelector('.fill').style.width = Math.max(0, Math.min(1, v - i)) * 100 + '%';
+  });
+  $('#rateVal').textContent = fmt(v);
+}
+
+(function buildStars() {
+  const box = $('#stars');
+  for (let i = 0; i < 5; i++) {
+    const s = document.createElement('div'); s.className = 'star';
+    s.innerHTML = '★<span class="fill">★</span><div class="h l"></div><div class="h r"></div>';
+    [['.l', i + .5], ['.r', i + 1]].forEach(([sel, v]) => {
+      const h = s.querySelector(sel);
+      h.addEventListener('pointerenter', () => paintStars(v));
+      h.addEventListener('click', () => finishRating(v));
+    });
+    box.appendChild(s);
+  }
+  box.addEventListener('pointerleave', () => paintStars(0));
+})();
+
+function askRating(f) {
+  $('#rateTitle').textContent = f.name;
+  $('#rateYear').textContent = f.year;
+  const img = $('#rateImg'); img.classList.add('hidden');
+  getPoster(f).then(u => { if (u) { img.src = u; img.classList.remove('hidden'); } });
+  paintStars(0);
+  $('#rate').classList.remove('hidden');
+  return new Promise(res => rateResolve = res);
+}
+
+function finishRating(v) {
+  if (!rateResolve) return;
+  $('#rate').classList.add('hidden');
+  const r = rateResolve; rateResolve = null; r(v);
+}
+
+$('#rateSkip').onclick = () => finishRating(null);
+$('#rateCancel').onclick = () => finishRating(undefined);
+$('#rate').addEventListener('click', e => { if (e.target.id === 'rate') finishRating(undefined); });
+
+/* ---------- keys ---------- */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (rateResolve) {
+    if (/^[0-9]$/.test(e.key)) finishRating(e.key === '0' ? 5 : +e.key / 2);
+    else if (e.key === 'Enter') finishRating(null);
+    else if (e.key === 'Escape') finishRating(undefined);
+    e.preventDefault(); return;
+  }
+  if (e.key === 'ArrowRight') decide(true);
+  else if (e.key === 'ArrowLeft') decide(false);
+  else if (e.key === 'Backspace' || (e.key === 'z' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); undo(); }
+});
+
+/* ---------- loading ---------- */
+async function loadFile(file) {
+  try {
+    let films, skip = new Set();
+    if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
+      const csvs = await unzipCSVs(await file.arrayBuffer());
+      const pick = n => Object.entries(csvs).find(([p]) => (p === n || p.endsWith('/' + n)) && !p.includes('deleted/'))?.[1];
+      const wl = pick('watchlist.csv');
+      if (wl == null) throw new Error('В архиве нет watchlist.csv');
+      films = filmsFromCSV(wl);
+      // anything already watched/rated/logged on Letterboxd doesn't need a card
+      for (const n of ['watched.csv', 'ratings.csv', 'diary.csv']) filmsFromCSV(pick(n) || '').forEach(f => skip.add(fkey(f)));
+    } else {
+      films = filmsFromCSV(await file.text());
+      if (!films.length) throw new Error('Не нашёл в файле колонки Name и Year');
+    }
+    queue = films.filter(f => !mem[fkey(f)] && !skip.has(fkey(f)));
+    pos = 0; history = [];
+    saveQueue(); render();
+  } catch (err) { alert(err.message); }
+}
+
+const drop = $('#drop'), fileIn = $('#file');
+drop.onclick = () => fileIn.click();
+fileIn.onchange = () => fileIn.files[0] && loadFile(fileIn.files[0]);
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+
+$('#tmdb').value = store.get(TMDB_KEY, '');
+$('#tmdb').onchange = () => store.set(TMDB_KEY, $('#tmdb').value.trim());
+
+$('#no').onclick = () => decide(false);
+$('#yes').onclick = () => decide(true);
+$('#undo').onclick = undo;
+$('#undo2').onclick = undo;
+$('#exportBtn').onclick = () => exportCSV(false);
+$('#exportBtn2').onclick = () => exportCSV(false);
+$('#exportAll').onclick = () => exportCSV(true);
+$('#homeBtn').onclick = showSetup;
+$('#resume').onclick = render;
+$('#forgetAll').onclick = () => {
+  if (!confirm('Стереть все ответы и оценки из памяти приложения? Нескачанные оценки пропадут.')) return;
+  mem = {}; queue = []; pos = 0; history = [];
+  saveMem(); saveQueue(); showSetup();
+};
+
+showSetup();
+</script>
+</body>
+</html>
