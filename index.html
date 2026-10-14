@@ -43,6 +43,8 @@
     background: #e5484d1a; color: var(--text); font-size: 14px; }
   .loadInfo { color: var(--muted); font-size: 12px; margin-top: 4px; }
   #memInfo { margin-top: 10px; }
+  .bm { display: inline-block; margin: 6px 0; padding: 6px 12px; border-radius: 8px; background: var(--orange);
+    color: #fff; font-weight: 600; text-decoration: none; cursor: grab; }
 
   /* progress */
   .progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 4px 0 8px; }
@@ -121,6 +123,28 @@
       В следующий раз — то же самое со свежим экспортом: увидишь только новое.
     </div>
     <div class="note" id="memInfo"></div>
+    <details>
+      <summary>Забрать фильмы с чужой страницы Letterboxd в CSV</summary>
+      <p>Для чужого списка, просмотренного друга (<code>/films/</code>), чужого watchlist — любой страницы с сеткой постеров.</p>
+      <ol>
+        <li>Перетащи эту кнопку на панель закладок браузера:
+          <a id="grabLink" class="bm" title="Перетащи на панель закладок">📥 Letterboxd → CSV</a></li>
+        <li>Открой на letterboxd.com нужную страницу и нажми закладку. Она пройдёт по всем страницам и скачает CSV.</li>
+        <li>Импортируй CSV в свой watchlist (кнопка импорта на странице watchlist).</li>
+      </ol>
+      <p>Фильтры на странице учитываются: например, открой просмотренное друга с оценкой 4★+ — заберутся только они.</p>
+    </details>
+    <details>
+      <summary>Убрать просмотренные фильмы из своего watchlist</summary>
+      <p>Letterboxd не убирает фильмы из watchlist при импорте оценок. Эта закладка делает это за тебя — только для фильмов, отмеченных как просмотренные.</p>
+      <ol>
+        <li>Перетащи кнопку на панель закладок:
+          <a id="cleanLink" class="bm" title="Перетащи на панель закладок">🧹 Убрать просмотренное</a></li>
+        <li>Открой любую страницу letterboxd.com, войдя в свой аккаунт, и нажми закладку.</li>
+        <li>Она прочитает твой watchlist, найдёт просмотренные и покажет их список. Ничего не удаляется, пока не нажмёшь «OK».</li>
+      </ol>
+      <p>Перед удалением скачается CSV с этими фильмами — если что, импортируй его обратно в watchlist.</p>
+    </details>
     <details>
       <summary>Настройки</summary>
       <p><button class="link" id="exportAll">Скачать CSV со всеми оценками за всё время</button><br>
@@ -556,6 +580,175 @@ fileIn.onchange = () => fileIn.files[0] && loadFile(fileIn.files[0]);
 drop.addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
 
 store.del('lbswipe.tmdb'); // a TMDB key saved by an older version
+
+/* ---------- bookmarklet: any Letterboxd poster grid → CSV ---------- */
+// Runs on letterboxd.com itself (same origin), walks every page via the "next" link and downloads Title,Year,LetterboxdURI.
+function lbGrab() {
+  if (!/(^|\.)letterboxd\.com$/.test(location.hostname)) { alert('Открой страницу на letterboxd.com (список, films, watchlist) и нажми закладку там.'); return; }
+  if (window.__lbGrab) return;
+  window.__lbGrab = true;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:16px;right:16px;z-index:99999;background:#00c030;color:#fff;padding:12px 16px;border-radius:10px;font:14px system-ui,sans-serif;box-shadow:0 6px 20px #0008';
+  document.body.appendChild(box);
+  const start = location.pathname.replace(/page\/\d+\/?$/, '');
+  const films = new Map();
+  const sleep = ms => new Promise(res => setTimeout(res, ms));
+  let partial = '';
+  (async () => {
+    try {
+      let url = start, page = 0;
+      while (url && page < 500) {
+        page++;
+        box.textContent = 'Страница ' + page + '… собрано ' + films.size;
+        // Letterboxd answers 403/429 when pages are fetched too fast; back off and retry
+        let r;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          r = await fetch(url, { credentials: 'include' });
+          if (r.ok || (r.status !== 403 && r.status !== 429)) break;
+          const wait = 5 * (attempt + 1);
+          for (let s = wait; s > 0; s--) { box.textContent = 'Letterboxd просит притормозить — жду ' + s + ' с… (страница ' + page + ', собрано ' + films.size + ')'; await sleep(1000); }
+        }
+        if (!r.ok) {
+          if (!films.size) throw new Error('HTTP ' + r.status);
+          partial = ' (не всё: Letterboxd перестал отдавать страницы на ' + page + '-й, попробуй позже)';
+          break;
+        }
+        const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+        doc.querySelectorAll('[data-item-link]').forEach(e => {
+          const link = e.dataset.itemLink;
+          if (!/^\/film\//.test(link) || films.has(link)) return;
+          const name = e.dataset.itemName || '', m = name.match(/^(.*) \((\d{4})\)$/);
+          films.set(link, [m ? m[1] : name, m ? m[2] : '', 'https://letterboxd.com' + link]);
+        });
+        url = doc.querySelector('a.next')?.getAttribute('href');
+        if (url) await sleep(2000); // be gentle with Letterboxd
+      }
+      if (!films.size) throw new Error('на этой странице нет фильмов');
+      const cell = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      const csv = '﻿' + [['Title', 'Year', 'LetterboxdURI'], ...films.values()].map(r => r.map(cell).join(',')).join('\r\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      a.download = start.replace(/^\/|\/$/g, '').replace(/\//g, '-') + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      box.textContent = 'Готово: ' + films.size + ' фильмов → ' + a.download + partial;
+      if (partial) box.style.background = '#ff8000';
+    } catch (e) {
+      box.style.background = '#e5484d';
+      box.textContent = 'Не получилось: ' + e.message;
+    } finally {
+      window.__lbGrab = false;
+      setTimeout(() => box.remove(), partial ? 20000 : 8000);
+    }
+  })();
+}
+/* ---------- bookmarklet: remove watched films from your own watchlist ---------- */
+// Uses the same calls as letterboxd.com itself: POST /ajax/letterboxd-metadata/ tells which films are watched,
+// PATCH /api/v0/me/watchlist/{lid} {inWatchlist:false} removes one (CSRF token lives in window.supermodelCSRF).
+function lbClean() {
+  if (!/(^|\.)letterboxd\.com$/.test(location.hostname)) { alert('Открой любую страницу letterboxd.com (войдя в аккаунт) и нажми закладку там.'); return; }
+  const me = window.person;
+  if (!me || !me.loggedIn || !me.username) { alert('Сначала войди в свой аккаунт Letterboxd, потом нажми закладку ещё раз.'); return; }
+  if (window.__lbClean) return;
+  window.__lbClean = true;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:16px;right:16px;max-width:420px;z-index:99999;background:#40bcf4;color:#fff;padding:12px 16px;border-radius:10px;font:14px system-ui,sans-serif;box-shadow:0 6px 20px #0008;white-space:pre-line';
+  document.body.appendChild(box);
+  const say = (text, color) => { box.textContent = text; if (color) box.style.background = color; };
+  const sleep = ms => new Promise(res => setTimeout(res, ms));
+  const req = async (url, opts, label) => {
+    for (let attempt = 0; ; attempt++) {
+      const r = await fetch(url, Object.assign({ credentials: 'include' }, opts));
+      if ((r.status !== 403 && r.status !== 429) || attempt >= 3) return r;
+      for (let s = 5 * (attempt + 1); s > 0; s--) { say(label + '\nLetterboxd просит притормозить — жду ' + s + ' с…'); await sleep(1000); }
+    }
+  };
+  let keep = 15000;
+  (async () => {
+    try {
+      const films = new Map();
+      let url = '/' + me.username + '/watchlist/', page = 0;
+      while (url) {
+        page++;
+        const label = 'Читаю твой watchlist: страница ' + page + ', фильмов ' + films.size;
+        say(label);
+        const r = await req(url, {}, label);
+        if (!r.ok) throw new Error('не удалось открыть watchlist (HTTP ' + r.status + ')');
+        const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+        doc.querySelectorAll('[data-item-link][data-postered-identifier]').forEach(e => {
+          let id; try { id = JSON.parse(e.dataset.posteredIdentifier); } catch { return; }
+          if (!id.lid || !id.uid || films.has(id.uid)) return;
+          films.set(id.uid, { lid: id.lid, uid: id.uid, name: e.dataset.itemName || e.dataset.itemLink, link: e.dataset.itemLink });
+        });
+        url = doc.querySelector('a.next')?.getAttribute('href');
+        if (url) await sleep(1500);
+      }
+      const all = [...films.values()];
+      if (!all.length) { say('Watchlist пуст — убирать нечего.', '#00c030'); return; }
+
+      const watched = new Set();
+      for (let i = 0; i < all.length; i += 50) {
+        const label = 'Проверяю, что из watchlist просмотрено: ' + i + ' / ' + all.length;
+        say(label);
+        const body = new URLSearchParams();
+        all.slice(i, i + 50).forEach(f => body.append('productions', f.uid));
+        const r = await req('/ajax/letterboxd-metadata/', { method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, label);
+        if (!r.ok) throw new Error('не удалось узнать, что просмотрено (HTTP ' + r.status + ')');
+        const j = await r.json();
+        if (j.csrf) window.supermodelCSRF = j.csrf;
+        (j.watched || []).forEach(u => watched.add(u));
+        await sleep(300);
+      }
+      const todo = all.filter(f => watched.has(f.uid));
+      if (!todo.length) { say('В watchlist (' + all.length + ') нет просмотренных фильмов 👍', '#00c030'); return; }
+
+      const names = todo.slice(0, 15).map(f => '• ' + f.name).join('\n') + (todo.length > 15 ? '\n…и ещё ' + (todo.length - 15) : '');
+      say('Жду подтверждения…');
+      if (!confirm('В твоём watchlist ' + all.length + ' фильмов, из них уже просмотрено ' + todo.length + ':\n\n' + names +
+        '\n\nУбрать их из watchlist?\nСначала скачается CSV с этими фильмами — его можно импортировать обратно в watchlist.')) {
+        say('Отменено — ничего не удалено.', '#8b98a5'); keep = 4000; return;
+      }
+
+      const cell = v => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      const csv = '﻿' + [['Title', 'Year', 'LetterboxdURI'], ...todo.map(f => {
+        const m = f.name.match(/^(.*) \((\d{4})\)$/);
+        return [m ? m[1] : f.name, m ? m[2] : '', 'https://letterboxd.com' + f.link];
+      })].map(r => r.map(cell).join(',')).join('\r\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      a.download = 'watchlist-removed-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      await sleep(800);
+
+      let done = 0;
+      const failed = [];
+      for (const f of todo) {
+        const label = 'Убираю ' + (done + failed.length + 1) + ' / ' + todo.length + ': ' + f.name;
+        say(label);
+        const r = await req('/api/v0/me/watchlist/' + encodeURIComponent(f.lid), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-CSRF-TOKEN': window.supermodelCSRF },
+          body: JSON.stringify({ inWatchlist: false }),
+        }, label);
+        if (r.ok) done++; else failed.push(f.name + ' (HTTP ' + r.status + ')');
+        if (!done && failed.length >= 3) break; // the API isn't accepting our calls — stop instead of hammering it
+        await sleep(700);
+      }
+      if (!failed.length) say('Готово: убрано ' + done + ' фильмов из watchlist.\nОбнови страницу, чтобы увидеть изменения.', '#00c030');
+      else say('Убрано ' + done + ' из ' + todo.length + '. Не получилось:\n' + failed.slice(0, 5).join('\n') + (failed.length > 5 ? '\n…' : ''), done ? '#ff8000' : '#e5484d');
+      if (failed.length) keep = 60000;
+    } catch (e) {
+      say('Не получилось: ' + e.message, '#e5484d'); keep = 60000;
+    } finally {
+      window.__lbClean = false;
+      setTimeout(() => box.remove(), keep);
+    }
+  })();
+}
+
+for (const [id, fn] of [['#grabLink', lbGrab], ['#cleanLink', lbClean]]) {
+  $(id).href = 'javascript:' + encodeURIComponent('(' + fn.toString() + ')()');
+  $(id).onclick = e => { e.preventDefault(); alert('Не нажимай здесь — перетащи кнопку на панель закладок, а нажимай уже на странице Letterboxd.'); };
+}
 
 $('#no').onclick = () => decide(false);
 $('#yes').onclick = () => decide(true);
